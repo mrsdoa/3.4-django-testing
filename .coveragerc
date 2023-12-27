@@ -1,2 +1,2 @@
 [run]
-omit = tests/*, manage.py, .pytest_cache/*, .migrations/*
+omit = tests/*, manage.py, .pytest_cache/*, .migrations/*, conftest.py

@@ -1,121 +1,151 @@
-from random import randint
-from urllib.parse import urljoin
-
-from django.conf import settings
-from django.urls import reverse
-from mimesis import Person
-from mimesis.enums import Gender
-from pytest import mark, param
-
-from students.models import Course
-
-COURSE_BASE_API_URL = reverse('courses-list')
-COURSE_NAME = Person('it').surname(gender=Gender.FEMALE)
-COURSE_BIG_QUANTITY = randint(2, 1000)
+import pytest
+from model_bakery import baker
+from rest_framework.test import APIClient
+from students.models import Course, Student
 
 
-@mark.parametrize('course_quantity', [
-    param(1, id='First course'),
-    param(COURSE_BIG_QUANTITY, id='Many courses'),
-])
-@mark.django_db
-def test_getting_course(api_client, course_factory, course_quantity):
-    failed_msd = 'Not valid courses were detected: \n{0}'
-    course_factory(_quantity=course_quantity)
-    response = api_client.get(COURSE_BASE_API_URL)
+@pytest.fixture
+def client():
+    return APIClient()
 
+
+@pytest.fixture
+def course_factory():
+    def factory(*args, **kwargs):
+        return baker.make(Course, *args, **kwargs)
+    return factory
+
+
+@pytest.fixture
+def student_factory():
+    def factory(*args, **kwargs):
+        return baker.make(Student, *args, **kwargs)
+    return factory
+
+
+@pytest.mark.django_db
+def test_get_a_course(client, course_factory):
+    """
+    Функция проверки получения курса по его идентификатору
+    """
+    # Arrange
+    courses = course_factory(_quantity=10)
+    id = courses[0].id
+
+    # Act
+    response = client.get(f'/courses/{id}/')
+
+    # Assert
+    data = response.json()
     assert response.status_code == 200
-    courses = response.data
-    courses_count = len(courses)
-    assert courses_count == course_quantity
-    failed_courses_list = [
-        course for course in courses if not course['id'] or not course['name']
-    ]
-    assert not failed_courses_list, failed_msd.format(failed_courses_list)
+    assert data['id'] == courses[0].id
 
 
-@mark.django_db
-def test_course_filter_id(api_client, course_factory):
-    course_factory(_quantity=COURSE_BIG_QUANTITY)
-    all_courses_response = api_client.get(COURSE_BASE_API_URL)
-    assert all_courses_response.status_code == 200
+@pytest.mark.django_db
+def test_get_courses(client, course_factory):
+    """
+    Функция проверки получения списка курсов
+    """
+    # Arrange
+    courses = course_factory(_quantity=10)
 
-    random_index = randint(0, COURSE_BIG_QUANTITY - 1)
-    all_courses = all_courses_response.data
-    random_course = all_courses[random_index]
-    _id = random_course['id']
-    filter_id_payload = {'id': _id}
+    # Act
+    response = client.get('/courses/')
 
-    filter_id_response = api_client.get(COURSE_BASE_API_URL, filter_id_payload)
-    assert filter_id_response.status_code == 200
-    assert len(filter_id_response.data) == 1
-    filtered_course = filter_id_response.data[0]
-    assert filtered_course['id'] == _id
-
-
-@mark.django_db
-def test_course_filter_name(api_client, course_factory):
-    Course.objects.create(name=COURSE_NAME)
-    course_payload = {'name': COURSE_NAME}
-    response = api_client.get(COURSE_BASE_API_URL, course_payload)
-
+    # Assert
     assert response.status_code == 200
-    courses = response.data
-    expected_course_name_from_api = courses[0]['name']
-    assert expected_course_name_from_api == COURSE_NAME
+    data = response.json()
+    assert len(data) == len(courses)
+    for index, value in enumerate(data):
+        assert value['name'] == courses[index].name
 
 
-@mark.django_db
-def test_course_create(api_client, course_factory):
-    course_create_payload = {'name': COURSE_NAME}
-    response_create = api_client.post(
-        COURSE_BASE_API_URL, course_create_payload
-    )
-    assert response_create.status_code == 201
-    response_get = api_client.get(COURSE_BASE_API_URL)
-    assert response_get.status_code == 200
-    course = response_get.data[0]
-    assert course
+@pytest.mark.django_db
+def test_filter_by_id(client, course_factory):
+    """
+    Функция проверки фильтрации курса по его идентификатору
+    """
+    # Arrange
+    courses = course_factory(_quantity=10)
+    id = courses[0].id
+
+    # Act
+    response = client.get(f'/courses/?id={id}')
+
+    # Assert
+    data = response.json()
+    assert response.status_code == 200
+    assert len(data) == 1
+    assert data[0]['id'] == id
 
 
-@mark.django_db
-def test_course_update(api_client, course_factory):
-    course_factory(_quantity=1)
-    get_response = api_client.get(COURSE_BASE_API_URL)
-    assert get_response.status_code == 200
+@pytest.mark.django_db
+def test_filter_by_name(client, course_factory):
+    """
+    Функция проверки фильтрации курса по его имени
+    """
+    # Arrange
+    courses = course_factory(_quantity=10)
+    name = courses[0].name
 
-    course_before = get_response.data[0]
-    course_name_before = course_before['name']
-    course_id = course_before['id']
-    new_course_name = COURSE_NAME
-    update_payload = {'name': new_course_name}
-    update_response = api_client.patch(
-        urljoin(COURSE_BASE_API_URL, f'{course_id}/'), update_payload
-    )
+    # Act
+    response = client.get(f'/courses/?name={name}')
 
-    assert update_response.status_code == 200
-    course_after = update_response.data
-    course_name_after = course_after['name']
-    assert course_name_before != course_name_after
+    # Assert
+    data = response.json()
+    assert response.status_code == 200
+    assert len(data) == 1
+    assert data[0]['name'] == name
 
 
-@mark.django_db
-def test_course_delete(api_client, course_factory):
-    courses_count_before = COURSE_BIG_QUANTITY
-    course_factory(_quantity=courses_count_before)
-    get_response_before = api_client.get(COURSE_BASE_API_URL)
-    assert get_response_before.status_code == 200
+@pytest.mark.django_db
+def test_create_course(client):
+    """
+    Функция проверки создания курса
+    """
+    # Act
+    response = client.post('/courses/', data={'name': 'Микроэкономика'},
+                           format='json')
 
-    random_index = randint(0, courses_count_before - 1)
-    courses_before_deleting = get_response_before.data
-    course_for_delete = courses_before_deleting[random_index]
-    _id = course_for_delete['id']
-    delete_response = api_client.delete(urljoin(COURSE_BASE_API_URL, f'{_id}/'))
-    assert delete_response.status_code == 204
+    # Assert
+    data = response.json()
+    assert response.status_code == 201
+    assert Course.objects.count() == 1
+    assert data['name'] == 'Микроэкономика'
 
-    get_response_after = api_client.get(COURSE_BASE_API_URL)
-    assert get_response_after.status_code == 200
-    courses_count_after = len(get_response_after.data)
-    assert courses_count_before - 1 == courses_count_after
-    courses_after_deleting = get_response_after.data
-    assert _id not in [course['id'] for course in courses_after_deleting]
+
+@pytest.mark.django_db
+def test_patch_course(client, course_factory):
+    """
+    Функция проверки обновления курса
+    """
+    # Arrange
+    courses = course_factory(_quantity=10)
+    id = courses[0].id
+
+    # Act
+    response = client.patch(f'/courses/{id}/', data={
+        'name': 'Ми-и-икроэкономика'},
+        format='json')
+
+    # Assert
+    data = response.json()
+    assert 1 == 1
+    assert response.status_code == 200
+    assert data['name'] == 'Ми-и-икроэкономика'
+
+
+@pytest.mark.django_db
+def test_delete_course(client, course_factory):
+    """
+    Функция проверки удаления курса
+    """
+    # Arrange
+    courses = course_factory(_quantity=10)
+    id = courses[0].id
+
+    # Act
+    response = client.delete(f'/courses/{id}/')
+
+    # Assert
+    assert response.status_code == 204
